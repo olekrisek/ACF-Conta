@@ -37,7 +37,15 @@ function getContaOrganizationID ( string APIkey, bool production, string orgName
 	return gCompID;
 end
 	
-
+function find_in_array ( array string arr, string key)
+	int i; 
+	for ( i = 1, sizeof(arr))
+		if ( arr[i] == key) then
+			return i; 
+		end if
+	end for
+	return -1; 
+end
 	
 	
 Function DiscountCalc ( float qty, float price, string disc)
@@ -59,6 +67,13 @@ function Assert ( String s1, string s2, string message )
 	return true; 
 end
 
+function AssertInArray ( string value, array string arr, string message )
+	int x = find_in_array (arr, value); 
+	if (x<0) then
+		throw (message);
+	end if
+	return true; 
+end
 
 function getContaApiKeyandNumber ()
 	array string apikeys, prod, invoSub, invoCont; 
@@ -337,11 +352,18 @@ Function ContaMakeCustomer(string PrimaryKey)
 	return "OK";
 End
 
+/*
+
+	CREATE PRODUCT
+	
+*/
+
+
 Function ContaCreateProduct(string ProdPrimKey)
 	array string prodProductNo, prodProductName, prodVatCode, prodBookKepingAccount, prodIsActive;
 	array float prodPrice;  
 	array int prodContaProductID;
-
+	
 	string sql = "SELECT ProductNo, ProductName, VatCode,Price, BookKepingAccount, IsActive, ContaProductID
 		FROM Products
 		WHERE PrimaryKey = :ProdPrimKey
@@ -356,6 +378,9 @@ Function ContaCreateProduct(string ProdPrimKey)
 	// Create the JSON object
 	int i = 1; 
 	bool Active = (prodIsActive[i]=="Yes"); 
+	array string ValidVATcodes = {"high", "medium", "low", "zero.rate", "exempted", "export"}; 
+	bool b1 = AssertInArray(prodVatCode[i], ValidVATcodes, 
+			prodProductName[i] + "ha an invalid VAT code '"+prodVatCode[i]+"', should be: " + implode (",", ValidVATcodes)); 
 	string vat = "output."+prodVatCode[i]; 
 	JSON prod;
 	prod = JSON(
@@ -440,15 +465,7 @@ Products::BookKepingAccount
 Products::ContaProductID
 
 */
-function find_in_array ( array string arr, string key)
-	int i; 
-	for ( i = 1, sizeof(arr))
-		if ( arr[i] == key) then
-			return i; 
-		end if
-	end for
-	return -1; 
-end
+
 
 /*
 
@@ -529,8 +546,10 @@ function CreateContaInvoice (string OrderPrimaryKey, bool allreadysent)
 	array float odDiscountAM, odDiscountPro; 
 	// Do Invoice Calculations
 	print "Lines = " + lines + "\n"; 
-	
+	array string ValidVATcodes = {"high", "medium", "low", "zero.rate", "exempted", "export"}; 
+
 	for (i=1, lines)
+		b1 = AssertInArray(prVatCode[i], ValidVATcodes, "Invalid VAT code '"+prVatCode[i]+"', should be: " + implode (",", ValidVATcodes));
 		sumNetInvoice += odLineTotal[i];
 		LineVAT = odLineTotal[i]*odTaxPercent[i]/100; 
 		sumVATInvoice += LineVAT; 
@@ -809,8 +828,10 @@ function CreateInvoiceDraft (string OrderPrimaryKey)
 	int lines = sizeof (odLineNo); 
 	array float odDiscountAM, odDiscountPro; 
 	// Do Invoice Calculations
+	array string ValidVATcodes = {"high", "medium", "low", "zero.rate", "exempted", "export"}; 
 	print "Lines = " + lines + "\n"; 
 	for (i=1, lines)
+		b1 = AssertInArray(prVatCode[i], ValidVATcodes, "Invalid VAT code '"+prVatCode[i]+"', should be: " + implode (",", ValidVATcodes));
 		sumNetInvoice += odLineTotal[i];
 		LineVAT = odLineTotal[i]*odTaxPercent[i]/100; 
 		sumVATInvoice += LineVAT; 
