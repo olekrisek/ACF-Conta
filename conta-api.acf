@@ -1,0 +1,942 @@
+Package ContaIntegration "Integrations to the Conta API"; 
+
+function getContaBaseURL (bool production)
+	if ( production ) then
+		return "https://api.gateway.conta.no"; 
+	else
+		return "https://api.gateway.conta-sandbox.no"; 
+	end if
+end
+
+function getContaOrganizationID ( string APIkey, bool production, string orgName )
+	$$ContaApiKey = APIkey; 
+	string hdr = 'apiKey:'+APIkey; 
+	string url = getContaBaseURL(production)+"/invoice/organizations";
+	string result, compName;
+	string gCompID, s,name ; 
+	// Do the API call
+	result = HTTP_GET(url, hdr);
+	// Handle the result, a JSON object
+	// print result; 
+	JSON res; 
+	// Our JSON implementation likes better to have the array in a tag
+	// might be improved in a later plugin release. 
+	res = '{"a":'+result+'}';
+	// loop the result to find matching name
+	int i, j= sizeof ( res["a"]);
+	for (i=1, j)
+		s = format ("a[%d].", i);	// a[1].
+		name = res[s+"name"]; // a[1].name
+		if ( upper(orgName) == upper(name)) then
+			gCompID = res[s+"id"];
+			$$ContaCompID = gCompID; 
+			$$ContaCompName = res[s+"name"]; 
+			break; // We found it, break out of the loop
+		end if
+	end for
+	return gCompID;
+end
+	
+
+	
+	
+Function DiscountCalc ( float qty, float price, string disc)
+	disc = trimboth (disc); 
+	float discAm, discper; 
+	if ( right( disc,1) == "%") then
+		discper = float(substring(disc,0, length(disc)-1))/100.0; 
+		discAm = qty*price*discper;
+	else
+		discAm = float(disc);
+	end if
+	return discAm; 
+end
+
+function Assert ( String s1, string s2, string message )
+	if ( s1 != s2 ) then
+		throw (message); 
+	end if
+	return true; 
+end
+
+
+function getContaApiKeyandNumber ()
+	array string apikeys, prod, invoSub, invoCont; 
+	array int contaOrgNr; 
+	JSON retObj; 
+	
+	
+	string sql = "SELECT ContaCurrentApiKey, ContaCurrentCompNo, ContaProduction, EmailInvoiceSubject, EmailInvoiceContent FROM Preferences
+	
+	INTO :apikeys, :contaOrgNr, :prod, :invoSub, :invoCont"; 
+	string res = ExecuteSQL(sql); 
+	if ( sizeof (apikeys)>0) then
+		retObj = JSON ( "APIkey", apikeys[1], "CompNo", contaOrgNr[1], "Production", trimboth(prod[1])=="Yes", 
+		"EmailSubject", invoSub[1], "EmailContent", invoCont[1]); 
+	else
+		retObj = JSON ( "APIkey", "", "CompNo", 0, "Production", false, "EmailSubject", "", "EmailContent", ""); 
+	end if
+	
+	return retObj;
+end
+
+function CreateContaIDobject ( int ContaID, String Notes, string JSONContaIDs )
+	json apiData, returnJson;
+	if ( JSONContaIDs != "") then
+		returnJson = JSONContaIDs; 
+	end if
+	print JSONContaIDs + "\nContoaID: " + ContaID + "\n";  
+	apiData = getContaApiKeyandNumber(); 
+	bool Prod = (apiData["Production"]=="1"); 
+	if ( Prod ) then
+		print "Production: \n"; 
+	  returnJson["ContaIDprod"] = string(ContaID); 
+	  if (returnJson["ContaIDsandbox"] == char(63) ) then
+		  returnJson["ContaIDsandbox"] = trimboth(Between ( Notes, "Sandbox:", char(13))); 
+	  end if
+  	else
+		print "Sandbox: \n"; 
+	  returnJson["ContaIDsandbox"] = string(ContaID); 
+	  if (returnJson["ContaIDprod"] == char(63) ) then
+		  returnJson["ContaIDprod"] = trimboth(Between ( Notes, "Sharp:", char(13))); 
+	  end if
+  	end if
+	print "returnJson: \n" + string (returnJson)+"\n"+"="*50+"\n"; 
+	return returnJson; 
+end	
+
+function CreateContaIDobjectOrder ( int ContaIDInv, int ContaIDDraft, string JSONContaIDs )
+	json apiData, returnJson;
+	if ( JSONContaIDs != "") then
+		returnJson = JSONContaIDs; 
+	end if
+	
+	apiData = getContaApiKeyandNumber(); 
+	bool Prod = (apiData["Production"]=="1"); 
+	if ( Prod ) then
+	  returnJson["ContaIDprod.Inv"] = string(ContaIDInv); 
+	  returnJson["ContaIDprod.Draft"] = string(ContaIDDraft); 
+	  
+  	else
+	  returnJson["ContaIDsandbox.Inv"] = string(ContaIDInv); 
+	  returnJson["ContaIDsandbox.Draft"] = string(ContaIDDraft); 
+  	end if
+	
+	return returnJson; 
+end	
+
+function GetActiveContaIDJSON ( string contaJSONstr, string module )
+	string ret; 
+	if (trimboth(contaJSONstr) == "" ) then
+		return ""; 
+	end if
+	JSON js, apiData; 
+	js = contaJSONstr; 
+	apiData = getContaApiKeyandNumber(); 
+	bool Prod = (apiData["Production"]=="1"); 
+	print format ("\nInput: %s\nModule: %s, Prod %d\n", contaJSONstr, module, int(Prod)); 
+	case
+		:(module == "" && Prod)
+			ret = js["ContaIDprod"]; 
+		:(module == "" && ! Prod)
+			ret = js["ContaIDsandbox"];
+		:(module == "OD" && Prod)
+			ret = js["ContaIDprod.Draft"];
+		:(module == "OI" && Prod)
+			ret = js["ContaIDprod.Inv"];
+		:(module == "OD" && ! Prod)
+			ret = js["ContaIDsandbox.Draft"];
+		:(module == "OI" && ! Prod)
+			ret = js["ContaIDsandbox.Inv"];
+		default
+	end case
+	print ",    ret="+ret; 
+	if (ret == "0") then
+		return ""; 
+	end if
+	return ret;
+end
+
+Function ValidateAndCleanPhoneNumber ( string Phone )
+	// Norwegian phone numbers are exactly 8 digits.
+	Phone = regex_replace("[^0-9]", Phone, ""); 
+	if ( length (Phone) > 8) then
+		Phone = right(Phone, 8); // Strip country code +47
+	end if
+	if ( length (Phone) < 8) then
+		Phone = ""; // Invalid phone number
+	end if
+	return Phone; 
+end
+
+Function ContaVerifyAPIresponce (json responce)
+	array string messages; 
+	string msg, keys = list_keys(responce); 
+	int er = pos (keys, "errors" ); 
+	int me = pos (keys, "messages" ); 
+	int i,j;
+	if (me<0 && er<0) then
+		return true;
+	end if
+	case
+		: (me>=0)
+			msg = responce["messages.EN"]; 
+			messages[] = msg;
+		: (er>=0)
+			j = sizeof (responce["errors"]); 
+			for (i = 1, j)
+				msg = responce[format("errors[%d].messages.EN", i)]; 
+				messages[] = string(i)+": "+msg;
+			end for
+	end case
+	throw "Errors: \n" + implode ("\n", messages); 
+	// return true; 
+end
+
+
+Function ContaMakeCustomer(string PrimaryKey)
+
+	array int cuKundeID;
+	array string cuKundeNavn, cuAdresse1, cuAdresse2, cuPostNr, cuSted, cuCountry; 
+	array string cuLCountry, cuLAdresse1, cuLAdresse2, cuLPostNr, cuLSted, cuMobil, cuEpost; 
+	array string cuKundetype, cuOrgNr;
+	array string coFirstName, coLastName, coName, coMobile, coEmail;
+	array int coID; 
+	
+	string sql = "SELECT KundeID, KundeNavn, Adresse1, Adresse2, PostNr, Sted, 
+	Country, LAdresse1, LAdresse2, LPostNr, LSted, LCountry, Mobil, Epost,
+    Kundetype, OrgNr
+    FROM Kunder
+    WHERE PrimaryKey = :PrimaryKey
+
+    INTO :cuKundeID, :cuKundeNavn, :cuAdresse1, :cuAdresse2, :cuPostNr, :cuSted, :cuCountry, :cuLAdresse1, :cuLAdresse2, :cuLPostNr, :cuLSted, :cuLCountry, :cuMobil, :cuEpost, :cuKundetype, :cuOrgNr
+"; 
+	string res = ExecuteSQL ( sql ); 
+	if ( res != "OK") then
+		alert (res); 
+	end if
+	if ( sizeof ( cuKundeNavn) != 1) then
+		throw "Customer not found";
+	end if
+	string  kundetype = (( lower(cuKundetype[1]) == "priv")?"INDIVIDUAL":"ORGANIZATION"); 
+	string phone; 
+	JSON cust;
+	phone = ValidateAndCleanPhoneNumber (cuMobil[1]); 
+	
+	// Build the JSON object. 
+	cust = JSON(
+	    "customerAddressCity", cuSted[1],
+	    "customerAddressCountry", cuCountry[1],
+	    "customerAddressLine1", cuAdresse1[1],
+	    "customerAddressLine2", cuAdresse2[1],
+	    "customerAddressPostcode", cuPostNr[1],
+	    "customerType", kundetype,
+	    "dateOfBirth", "",
+	    "daysUntilEstimateOverdue", 14,
+	    "daysUntilPaymentReminder", 30,
+	    "defaultInvoiceDiscount", "0",
+	    "deliveryAddressCity", cuLSted[1],
+	    "deliveryAddressCountry", cuLCountry[1],
+	    "deliveryAddressLine1", cuLAdresse1[1],
+	    "deliveryAddressLine2", cuLAdresse2[1],
+	    "deliveryAddressPostcode", cuLPostNr[1],
+	   // "efakturaEmailAddress", cuEpost[1],
+	   // "efakturaName", cuKundeNavn[1],
+	   // "efakturaPhoneNo", phone,
+	    "emailAddress", cuEpost[1],
+	    "invoiceDeliveryMethod", "EMAIL",
+	    "isActive", true,
+	    "mailingAddressCity", cuSted[1],
+	    "mailingAddressCountry", cuCountry[1],
+	    "mailingAddressLine1", cuAdresse1[1],
+	    "mailingAddressLine2", cuAdresse2[1],
+	    "mailingAddressPostcode", cuPostNr[1],
+	    "name", cuKundeNavn[1],
+	    "orgNo", cuOrgNr[1],
+	    "parentCompanyNameForNuf", "",
+	    "phoneNo", phone,
+	    "vismaNo", ""
+	);
+	  
+	// Extra..."ehfRecipientOrgNo", cuOrgNr[1],"id", cuKundeID[1],
+	
+	// Get the Contaxts from the Contacts table. 
+	sql = "SELECT FirstName, LastName, Name, Mobile, Email, id
+	  FROM Contacts
+	  WHERE CustomerFK = :PrimaryKey  AND InvoiceRecipient = 'Yes'
+
+	  INTO :coFirstName, :coLastName, :coName, :coMobile, :coEmail, :coID";
+	res = ExecuteSQL ( sql ); 
+	if ( res != "OK") then
+		alert (res); 
+		return res; 
+	end if
+			
+	int i, j; 
+	j= sizeof (coFirstName ); 
+	print "Contacts="+j;
+	
+	for (i=1, j)
+		phone = ValidateAndCleanPhoneNumber (coMobile[i]); 
+		if ( phone != "") then
+			cust["contacts[]"] = JSON(
+  		  		"id", coID[i],
+  			  	"customerId", cuKundeID[1],
+ 			   	"name", coName[i],
+ 			   	"phoneNo", phone,
+  			  	"emailAddress", coEmail[i],
+   			 	"title", ""
+			);
+		else
+			cust["contacts[]"] = JSON(
+  		  		"id", coID[i],
+  			  	"customerId", cuKundeID[1],
+ 			   	"name", coName[i],
+  			  	"emailAddress", coEmail[i],
+   			 	"title", ""
+			);
+		end if
+	end for
+	
+	// Do the API call
+	
+	JSON apidata = getContaApiKeyandNumber(); 
+	print string(apidata); 
+	if ( apidata["APIkey"] == "") then
+		alert ("No API key found"); 
+		return "ERROR: Missing APIkey"; 
+	end if
+	
+	string APIkey = apidata["APIkey"]; 
+	bool production = (apidata["Production"]=="1");
+	int compOrg = int(apidata["CompNo"]); 
+	
+	string hdr = 'apiKey:'+APIkey; 
+	string url = getContaBaseURL(production)+"/invoice/organizations/"+compOrg+"/customers";
+	print "\n"+url; 
+	string data = string(cust); 
+	res = HTTP_POST ( url, data, hdr);
+	print res;
+	
+	string contaCustID; 
+	// Verify the result- 
+	JSON apiRes = res; 
+	if (ContaVerifyAPIresponce(apiRes)) then
+		contaCustID = apires["id"]; 
+		$$CustContaID = contaCustID; 
+		print "ContaCustID = " + contaCustID; 
+		// Update ContaCustomerID on the customer. 
+		sql = "UPDATE Kunder SET ContaCustomerID = :contaCustID, ContaResponce = :res
+		WHERE PrimaryKey = :PrimaryKey"; 
+		res = ExecuteSQL( sql ); 
+		if ( res != "") then
+			alert ( res ); 
+			return "ERROR Update ContaCustID..."+res; 
+		end if
+	end if
+	return "OK";
+End
+
+Function ContaCreateProduct(string ProdPrimKey)
+	array string prodProductNo, prodProductName, prodVatCode, prodBookKepingAccount, prodIsActive;
+	array float prodPrice;  
+	array int prodContaProductID;
+
+	string sql = "SELECT ProductNo, ProductName, VatCode,Price, BookKepingAccount, IsActive, ContaProductID
+		FROM Products
+		WHERE PrimaryKey = :ProdPrimKey
+			
+		INTO :prodProductNo, :prodProductName, :prodVatCode, :prodPrice, :prodBookKepingAccount, :prodIsActive, :prodContaProductID
+		";
+	string res = ExecuteSQL ( sql ) ; 
+	if ( sizeof ( prodProductNo) == 0) then 
+		throw "Product does not exists, Primarykey " + ProdPrimKey; 
+	end if
+	
+	// Create the JSON object
+	int i = 1; 
+	bool Active = (prodIsActive[i]=="Yes"); 
+	string vat = "output."+prodVatCode[i]; 
+	JSON prod;
+	prod = JSON(
+		"bookkeepingAccountNo", prodBookKepingAccount[i],
+		"isActive", Active,
+		"name", prodProductName[i],
+		"price", prodPrice[i],
+		"productNo", prodProductNo[i],
+		"vatCode", vat
+	);
+	
+	// Do the API request
+	JSON apidata = getContaApiKeyandNumber(); 
+	if ( apidata["APIkey"] == "") then
+		alert ("No API key found"); 
+		return "ERROR: Missing APIkey"; 
+	end if
+	
+	string APIkey = apidata["APIkey"]; 
+	bool production = (apidata["Production"]=="1");
+	int compOrg = int(apidata["CompNo"]); 
+	
+	string hdr = 'apiKey:'+APIkey; 
+	string url = getContaBaseURL(production)+"/invoice/organizations/"+compOrg+"/products";
+	print "\n"+url; 
+	string data = string(prod); 
+	res = HTTP_POST ( url, data, hdr);
+	print res;
+	int contaProdID;
+	// Verify the result- 
+	JSON apiRes = res; 
+	if (ContaVerifyAPIresponce(apiRes)) then
+		contaProdID = int(apires["id"]); 
+		print "ContaProductID = " + contaProdID; 
+		// Update ContaProductID on the Product. 
+		sql = "UPDATE Products SET ContaProductID = :contaProdID
+		WHERE PrimaryKey = :ProdPrimKey"; 
+		res = ExecuteSQL( sql ); 
+		if ( res != "") then
+			alert ( res ); 
+			return "ERROR Update ContaProductID..."+res; 
+		end if
+	end if
+	return "OK";
+End
+
+/*
+
+Kunder::PrimaryKey
+Kunder::ContaCustomerID
+Orders::PrimaryKey
+Orders::CustomerFK
+Orders::CustomerName
+Orders::OrderDate
+Orders::OrderID
+Orders::OrderDeliveryDate
+Orders::OrderDescription
+Orders::OrderStatus
+Orders::ContaInvoiceID
+Orders::SumNet
+Orders::InvoiceDate
+Orders::DueDate
+
+OrdersDetails::OrderFK
+OrdersDetails::LineNo
+OrdersDetails::ProductFK
+OrdersDetails::ProductName
+OrdersDetails::Price
+OrdersDetails::Qty
+OrdersDetails::Discount
+OrdersDetails::LineTotal
+OrdersDetails::TaxType
+OrdersDetails::TaxPercent
+OrdersDetails::SumInclVAT
+
+Products::PrimaryKey
+Products::ProductNo
+Products::ProductName
+Products::VatCode
+Products::Price
+Products::BookKepingAccount
+Products::ContaProductID
+
+*/
+function find_in_array ( array string arr, string key)
+	int i; 
+	for ( i = 1, sizeof(arr))
+		if ( arr[i] == key) then
+			return i; 
+		end if
+	end for
+	return -1; 
+end
+
+/*
+
+Orders::ContaDraftInvoiceID
+Orders::InvoiceNoOtherSystem
+Orders::PaidAmount
+Orders::ContaInvoiceID
+	
+*/
+
+function CreateContaInvoice (string OrderPrimaryKey, bool allreadysent)
+	// Verify if the customer is created
+	
+	string sql, res; 
+	bool b1;
+	array string aCustPrimKey, aCustContaID; 
+	res = ExecuteSQL ("SELECT Kunder.PrimaryKey, Kunder.ContaCustomerID FROM Orders
+	LEFT JOIN Kunder ON Kunder.PrimaryKey = Orders.CustomerFK
+	WHERE Orders.PrimaryKey = :OrderPrimaryKey
+	
+	INTO :aCustPrimKey, :aCustContaID");
+	case
+		: (sizeof (aCustPrimKey) == 0)
+			throw ("Order - Customer link broken"); 
+		: (aCustContaID[1] == "") 
+			res = ContaMakeCustomer(aCustPrimKey[1]); // Save customer first
+			b1 = assert ( res, "OK", "Error saving customer to Conta: " + res); 
+			aCustContaID[1] = $$CustContaID; // to be included in the API request. 
+		default
+			// Link is OK, and customer saved, 
+	end case
+		
+	// Verify all the products are saved. 
+	array int aContProdID, aContaCount; 
+	array string aProdPrimKey; 
+	res = ExecuteSQL ( "SELECT pr.ContaProductID, pr.PrimaryKey, count(od.OrderFK) FROM OrdersDetails AS od
+			LEFT OUTER JOIN Products AS pr ON pr.PrimaryKey = od.ProductFK
+			WHERE od.OrderFK = :OrderPrimaryKey
+			GROUP BY pr.ContaProductID, pr.PrimaryKey
+			
+			INTO :aContProdID, :aProdPrimKey, :aContaCount"); 
+	int i, j = sizeof (aContProdID); 
+	if (j == 0) then
+		throw "No order lines in invoice"; 
+	end if
+	print "Done checking"+ "\n";  
+	for (i=1, j)
+		case
+			:(aProdPrimKey[i] == "")
+				throw Format ("Product not linked, on %d lines.",aContaCount[i]); 
+			:(aContProdID[i] == 0)
+				res = ContaCreateProduct(aProdPrimKey[i]);
+				assert ( res , "OK", "Error saving product " + aProdPrimKey[i] + " " + res); 
+		end case
+	end for
+	// All the products has been saved, conta-id has been updated. 
+	
+	array string odProductFK, odProductName, odDiscount,
+	odTaxType, prPrimaryKey, prProductNo, prProductName, prVatCode, 
+	prBookKepingAccount;
+	array float odPrice, odQty, odLineTotal, odTaxPercent, odSumInclVAT, prPrice;
+	array int prContaProductID, odLineNo;
+	
+	// Now, pull the Orderdetails data
+	sql = "SELECT  od.LineNo, od.ProductFK, od.ProductName, od.Discount, od.TaxType, 
+			od.SumInclVAT, pr.PrimaryKey, pr.ProductNo, pr.ProductName, pr.VatCode, pr.BookKepingAccount, 
+			od.Price, od.Qty, od.LineTotal, od.TaxPercent, od.SumInclVAT, pr.Price, pr.ContaProductID
+  		FROM OrdersDetails AS od
+		LEFT JOIN Products AS pr ON pr.PrimaryKey = od.ProductFK
+		WHERE od.OrderFK = :OrderPrimaryKey
+		
+		INTO :odLineNo, :odProductFK, :odProductName, :odDiscount, :odTaxType, :odSumInclVAT, :prPrimaryKey, :prProductNo, :prProductName, :prVatCode, :prBookKepingAccount, :odPrice, :odQty, :odLineTotal, :odTaxPercent, :odSumInclVAT, :prPrice, :prContaProductID
+		 ";
+	res = ExecuteSQL ( sql ); 
+		 
+	float sumNetInvoice, sumVATInvoice, sumTotalInvoice, LineVAT, DiscountAM, DiscountPro; 
+	int lines = sizeof (odLineNo); 
+	array float odDiscountAM, odDiscountPro; 
+	// Do Invoice Calculations
+	print "Lines = " + lines + "\n"; 
+	
+	for (i=1, lines)
+		sumNetInvoice += odLineTotal[i];
+		LineVAT = odLineTotal[i]*odTaxPercent[i]/100; 
+		sumVATInvoice += LineVAT; 
+		DiscountAM = DiscountCalc(odQty[i], odPrice[i], odDiscount[i]); 
+		odDiscountAM[] = DiscountAM; 
+		DiscountPro = (DiscountAM /(odQty[i] * odPrice[i]))*100; 
+		odDiscountPro[] = DiscountPro; 
+		sumTotalInvoice += odLineTotal[i]+LineVAT; 
+	end for
+	print "Done calc"+ "\n"; 
+	// Then pull the data from the orderhead. 
+	array string ohCustomerName, ohOrderDescription, ohOrderStatus, ohYourRef, ohOurRef;
+	array date ohOrderDate, ohOrderDeliveryDate, ohInvoiceDate, ohDueDate;
+	array float ohSumNet, ohPaidAmount;
+	array int ohOrderID, ohContaInvoiceID, ohContaDraftInvoiceID, ohInvoiceNo;
+	
+	sql = "SELECT CustomerName, OrderDescription, OrderStatus, OrderDate, OrderDeliveryDate, 
+			InvoiceDate, DueDate, SumNet, OrderID, ContaInvoiceID, ContaDraftInvoiceID, InvoiceNo, PaidAmount,
+			YourRef,OurRef
+		FROM Orders
+		WHERE PrimaryKey = :OrderPrimaryKey
+
+		INTO  :ohCustomerName, :ohOrderDescription, :ohOrderStatus, :ohOrderDate, :ohOrderDeliveryDate, 
+		:ohInvoiceDate, :ohDueDate, :ohSumNet, :ohOrderID, :ohContaInvoiceID, :ohContaDraftInvoiceID, :ohInvoiceNo, :ohPaidAmount, 
+		:ohYourRef, :ohOurRef
+		";
+	res = ExecuteSQL ( sql ); 
+	print "\n\nSQL: " + res + "\n\n"; 
+	j = sizeof ( ohCustomerName); 
+	if ( j == 0 ) then
+		throw "Didn't find the order with " + OrderPrimaryKey; 
+	end if
+	
+	// Now, check if we allready have an invoice ID. 
+	if ( ohContaInvoiceID[1] != 0) then
+		return format ( "Order %d is allready invoiced with number %d, wisit Conta.no to check",ohOrderID[1], ohContaInvoiceID[1]); 
+	end if
+	
+	if (abs(ohSumNet[1] - sumNetInvoice)>0.001) then
+		throw format("Invoice calculation does not add up. Head: %.3f, Lines: %.3f", ohSumNet[1], sumNetInvoice); 
+	end if
+	
+	print "Done checking, j="+j+ "\n"; 
+	// Now, lets create the JSON nessessary for the API. 
+	ohYourRef[1] =  ((ohYourRef[1] == "")?ohCustomerName[1]:ohYourRef[1]);
+	JSON order; 
+	order = JSON(
+	    "customerId", aCustContaID[1],
+	    "customerReference", ohYourRef[1],
+	    // "attachmentFileId", "9223372036854776000",
+	    // "customerGroupId", "9223372036854776000",
+	    // "departmentId", "9223372036854776000",
+	    "exchangeRate", 1,
+	    "exchangeRateReferenceDate", string(ohInvoiceDate[1], "%Y-%m-%d"),
+	    "invoiceCurrency", "NOK",
+	    "invoiceLanguage", "NO",
+		"isCreatedInOtherSystem", allreadysent, 
+		"invoiceDate", string(ohInvoiceDate[1], "%Y-%m-%d"),
+		"invoiceDueDate", string(ohDueDate[1], "%Y-%m-%d"),
+	    "personalMessage", ohOrderDescription[1],
+	    // "projectId", "9223372036854776000",
+	    // "registrationSource", "CONTA",
+	    // "saleId", "9223372036854776000",
+	    "type", "NORMAL"
+	);
+	if (ohContaDraftInvoiceID[1] != 0 ) then
+		order["id"] = ohContaDraftInvoiceID[1]; 
+	end if
+	print "Done OH"+ "\n"; 
+	string vat;
+	for (i=1, lines)
+		vat = prVatCode[i]; 
+		order["invoiceLines[]"] = JSON(
+		    "description", odProductName[i],
+		    "discount", odDiscountPro[i],
+		    "lineNo", odLineNo[i],
+		    "price", odPrice[i],
+		    "productId", prContaProductID[i],
+		    "quantity", odQty[i],
+		    "sumDiscount", odDiscountAM[i], // or calculated if discount is a percentage
+		    "sumNet", odLineTotal[i],
+		    "vatCode", vat
+			);
+	end for
+	
+	JSON apidata = getContaApiKeyandNumber(); 
+	if ( apidata["APIkey"] == "") then
+		alert ("No API key found"); 
+		return "ERROR: Missing APIkey"; 
+	end if
+	string InvoEmailSub = apidata["EmailSubject"];
+	string InvoEmailCont = apidata["EmailContent"];
+	
+	// Add the invoice recipients
+	array string coFirstName, coLastName, coName, coMobile, coEmail;
+	array string cuKundeNavn, cuAdresse1, cuAdresse2, cuPostNr, cuSted, cuCountry; 
+	array string cuMobil, cuEpost; 
+	string MyCompany = ExecuteSQL ( "SELECT CompanyName FROM Preferences"); 
+	array int coID; 
+	string CustomerPrimKey = aCustPrimKey[1]; 
+	// Get the Contaxts from the Contacts table. 
+	if ( ! allreadysent ) then
+		print "\nEmail-recipients...\n";
+		sql = "SELECT FirstName, LastName, Name, Mobile, Email, id
+		  FROM Contacts
+		  WHERE CustomerFK = :CustomerPrimKey  AND InvoiceRecipient = 'Yes'
+
+		  INTO :coFirstName, :coLastName, :coName, :coMobile, :coEmail, :coID";
+		res = ExecuteSQL ( sql ); 
+		if ( res != "OK") then
+			alert (res); 
+			return res; 
+		end if
+	
+		j= sizeof (coFirstName); 
+		if (j == 0) then
+			sql = "SELECT  KundeNavn, Adresse1, Adresse2, PostNr, Sted, 
+				Country, Mobil, Epost
+			    FROM Kunder
+			    WHERE PrimaryKey = :CustomerPrimKey
+
+			    INTO :cuKundeNavn, :cuAdresse1, :cuAdresse2, :cuPostNr, :cuSted, :cuCountry, :cuMobil, :cuEpost
+			"; 
+			res = executeSQL ( sql ) ; 
+			if ( sizeof ( cuKundeNavn) == 0) then
+				return "No email registered on the customer, add a email to send it"; 
+			end if
+			// Create E-mail recipients from the fields on the customer. 
+			order["invoiceRecipients[]"] = JSON(
+			"customerId",aCustContaID[1],
+			// "ehfRecipient","IeNenkUZHGUor6TcgV7iZZYML3mwDl35Mk-708RCcf-k Na4jQ",
+			"emailAddress",cuEpost[1],
+			"emailContent",InvoEmailCont, // Here we must have some content preferences
+			"emailRecipientType","EMAIL_TO",
+			"emailSubject", InvoEmailSub,
+			"includeDefaultAttachment",true,
+			"includeInvoiceAttachment",true,
+			"includeInvoiceInfo",true,
+			/*"mailAddressCity","string",
+			"mailAddressCountryCode","st",
+			"mailAddressLine1","string",
+			"mailAddressLine2","string",
+			"mailAddressPostcode","string",*/
+			"name",cuKundeNavn[1],
+			"phoneNo",cuMobil[1],
+			"type","EMAIL");
+		else
+			for (i=1, j)
+				order["invoiceRecipients[]"] = JSON(
+				"customerId",aCustContaID[1],
+				// "ehfRecipient","IeNenkUZHGUor6TcgV7iZZYML3mwDl35Mk-708RCcf-k Na4jQ",
+				"emailAddress",coEmail[i],
+				"emailContent",InvoEmailCont, // Here we must have some content preferences
+				"emailRecipientType","EMAIL_TO",
+				"emailSubject", InvoEmailSub,
+				"includeDefaultAttachment",true,
+				"includeInvoiceAttachment",true,
+				"includeInvoiceInfo",true,
+				/*"mailAddressCity","string",
+				"mailAddressCountryCode","st",
+				"mailAddressLine1","string",
+				"mailAddressLine2","string",
+				"mailAddressPostcode","string",*/
+				"name",coName[i],
+				"phoneNo",coMobile[i],
+				"type","EMAIL");
+			end for
+		end if
+	end if
+	print string(order); 
+	
+	// Debugg stopp
+	// return order; 
+	
+	// Do the API request
+	
+	
+	string APIkey = apidata["APIkey"]; 
+	bool production = (apidata["Production"]=="1");
+	int compOrg = int(apidata["CompNo"]); 
+	
+	string hdr = 'apiKey:'+APIkey; 
+	// /invoice/organizations/{opContextOrgId}/invoices
+	string url = getContaBaseURL(production)+"/invoice/organizations/"+compOrg+"/invoices";
+	print "\n"+url; 
+	string data = string(order); 
+	res = HTTP_POST ( url, data, hdr);
+	print "\n"+res;
+	int contaInvID;
+	// Verify the result- 
+	JSON apiRes = res; 
+	if (ContaVerifyAPIresponce(apiRes)) then
+		contaInvID = int(apires["id"]); 
+		print "\nContaInvoiceID = " + contaInvID+"\n"; 
+		// Update ContaProductID on the Product. 
+		sql = "UPDATE Orders SET ContaInvoiceID = :contaInvID
+		WHERE PrimaryKey = :OrderPrimaryKey"; 
+		res = ExecuteSQL( sql ); 
+		if ( res != "") then
+			alert ( res ); 
+			return "ERROR Update ContaInvoiceID..."+res; 
+		end if
+	end if
+	
+	
+	return "OK"; 
+end
+
+
+function CreateInvoiceDraft (string OrderPrimaryKey)
+	// Verify if the customer is created
+	
+	string sql, res; 
+	bool b1;
+	array string aCustPrimKey, aCustContaID; 
+	res = ExecuteSQL ("SELECT Kunder.PrimaryKey, Kunder.ContaCustomerID FROM Orders
+	LEFT JOIN Kunder ON Kunder.PrimaryKey = Orders.CustomerFK
+	WHERE Orders.PrimaryKey = :OrderPrimaryKey
+	
+	INTO :aCustPrimKey, :aCustContaID");
+	case
+		: (sizeof (aCustPrimKey) == 0)
+			throw ("Order - Customer link broken"); 
+		: (aCustContaID[1] == "") 
+			res = ContaMakeCustomer(aCustPrimKey[1]); // Save customer first
+			b1 = assert ( res, "OK", "Error saving customer to Conta: " + res); 
+			aCustContaID[1] = $$CustContaID; // to be included in the API request. 
+		default
+			// Link is OK, and customer saved, 
+	end case
+		
+	// Verify all the products are saved. 
+	array int aContProdID, aContaCount; 
+	array string aProdPrimKey; 
+	res = ExecuteSQL ( "SELECT pr.ContaProductID, pr.PrimaryKey, count(od.OrderFK) FROM OrdersDetails AS od
+			LEFT OUTER JOIN Products AS pr ON pr.PrimaryKey = od.ProductFK
+			WHERE od.OrderFK = :OrderPrimaryKey
+			GROUP BY pr.ContaProductID, pr.PrimaryKey
+			
+			INTO :aContProdID, :aProdPrimKey, :aContaCount"); 
+	int i, j = sizeof (aContProdID); 
+	if (j == 0) then
+		throw "No order lines in invoice"; 
+	end if
+	print "Done checking"+ "\n";  
+	for (i=1, j)
+		case
+			:(aProdPrimKey[i] == "")
+				throw Format ("Product not linked, on %d lines.",aContaCount[i]); 
+			:(aContProdID[i] == 0)
+				res = ContaCreateProduct(aProdPrimKey[i]);
+				assert ( res , "OK", "Error saving product " + aProdPrimKey[i] + " " + res); 
+		end case
+	end for
+	// All the products has been saved, conta-id has been updated. 
+	
+	array string odProductFK, odProductName, odDiscount,
+	odTaxType, prPrimaryKey, prProductNo, prProductName, prVatCode, 
+	prBookKepingAccount;
+	array float odPrice, odQty, odLineTotal, odTaxPercent, odSumInclVAT, prPrice;
+	array int prContaProductID, odLineNo;
+	
+	// Now, pull the Orderdetails data
+	sql = "SELECT  od.LineNo, od.ProductFK, od.ProductName, od.Discount, od.TaxType, 
+			od.SumInclVAT, pr.PrimaryKey, pr.ProductNo, pr.ProductName, pr.VatCode, pr.BookKepingAccount, 
+			od.Price, od.Qty, od.LineTotal, od.TaxPercent, od.SumInclVAT, pr.Price, pr.ContaProductID
+  		FROM OrdersDetails AS od
+		LEFT JOIN Products AS pr ON pr.PrimaryKey = od.ProductFK
+		WHERE od.OrderFK = :OrderPrimaryKey
+		
+		INTO :odLineNo, :odProductFK, :odProductName, :odDiscount, :odTaxType, :odSumInclVAT, :prPrimaryKey, :prProductNo, :prProductName, :prVatCode, :prBookKepingAccount, :odPrice, :odQty, :odLineTotal, :odTaxPercent, :odSumInclVAT, :prPrice, :prContaProductID
+		 ";
+	res = ExecuteSQL ( sql ); 
+		 
+	float sumNetInvoice, sumVATInvoice, sumTotalInvoice, LineVAT, DiscountAM, DiscountPro; 
+	int lines = sizeof (odLineNo); 
+	array float odDiscountAM, odDiscountPro; 
+	// Do Invoice Calculations
+	print "Lines = " + lines + "\n"; 
+	for (i=1, lines)
+		sumNetInvoice += odLineTotal[i];
+		LineVAT = odLineTotal[i]*odTaxPercent[i]/100; 
+		sumVATInvoice += LineVAT; 
+		DiscountAM = DiscountCalc(odQty[i], odPrice[i], odDiscount[i]); 
+		odDiscountAM[] = DiscountAM; 
+		DiscountPro = (DiscountAM /(odQty[i] * odPrice[i]))*100; 
+		odDiscountPro[] = DiscountPro; 
+		sumTotalInvoice += odLineTotal[i]+LineVAT; 
+	end for
+	print "Done calc"+ "\n"; 
+	// Then pull the data from the orderhead. 
+	array string ohCustomerName, ohOrderDescription, ohOrderStatus;
+	array date ohOrderDate, ohOrderDeliveryDate, ohInvoiceDate, ohDueDate;
+	array float ohSumNet;
+	array int ohOrderID, ohContaInvoiceID;
+	
+	sql = "SELECT CustomerName, OrderDescription, OrderStatus, OrderDate, OrderDeliveryDate, 
+			InvoiceDate, DueDate, SumNet, OrderID, ContaDraftInvoiceID
+		FROM Orders
+		WHERE PrimaryKey = :OrderPrimaryKey
+
+		INTO  :ohCustomerName, :ohOrderDescription, :ohOrderStatus, :ohOrderDate, :ohOrderDeliveryDate, :ohInvoiceDate, :ohDueDate, :ohSumNet, :ohOrderID, :ohContaInvoiceID
+		";
+	res = ExecuteSQL ( sql ); 
+	
+	j = sizeof ( ohCustomerName); 
+	if ( j == 0 ) then
+		throw "Didn't find the order with " + OrderPrimaryKey; 
+	end if
+	
+	// Now, check if we allready have an invoice ID. 
+	if ( ohContaInvoiceID[1] != 0) then
+		return format ( "Order %d is allready made draft with number %d, wisit Conta.no to check",ohOrderID[1], ohContaInvoiceID[1]); 
+	end if
+	
+	if (abs(ohSumNet[1] - sumNetInvoice)>0.001) then
+		throw format("Invoice calculation does not add up. Head: %.3f, Lines: %.3f", ohSumNet[1], sumNetInvoice); 
+	end if
+	
+	print "Done checking, j="+j+ "\n"; 
+	// Now, lets create the JSON nessessary for the API. 
+	JSON order; 
+	order = JSON(
+	    "customerId", aCustContaID[1],
+	    "customerReference", ohCustomerName[1],
+	    // "attachmentFileId", "9223372036854776000",
+	    // "customerGroupId", "9223372036854776000",
+	    // "departmentId", "9223372036854776000",
+	    "exchangeRate", 1,
+	    "exchangeRateReferenceDate", string(ohInvoiceDate[1], "%Y-%m-%d"),
+	    "invoiceCurrency", "NOK",
+	    "invoiceLanguage", "NO",
+	    "personalMessage", ohOrderDescription[1],
+	    // "projectId", "9223372036854776000",
+	    "registrationSource", "CONTA",
+	    // "saleId", "9223372036854776000",
+	    // Not for drafts: "sumNet", ohSumNet[1],
+	    // "sumRemaining", "99999999999", // not sure what this is?
+	    // Not for drafts: "sumTotal", sumTotalInvoice,
+	    // Not for drafts: "sumVAT", sumVATInvoice,
+	    "type", "NORMAL"
+	);
+	print "Done OH"+ "\n"; 
+	string vat;
+	for (i=1, lines)
+		vat = prVatCode[i]; 
+		order["invoiceDraftLines[]"] = JSON(
+		    // Not for drafts: "bookkeepingAccountNo", prBookKepingAccount[i],
+		    "description", odProductName[i],
+		    "discount", odDiscountPro[i],
+		    // "id", "9223372036854776000",
+		    // "invoiceDraftId", "9223372036854776000",
+		    "lineNo", odLineNo[i],
+		    "price", odPrice[i],
+		    "productId", prContaProductID[i],
+		    "quantity", odQty[i],
+		    "sumDiscount", odDiscountAM[i], // or calculated if discount is a percentage
+		    "sumNet", odLineTotal[i],
+		    "vatCode", vat
+		    //"vatId", "9223372036854776000"
+			);
+	end for
+	print string(order); 
+	
+	// Do the API request
+	JSON apidata = getContaApiKeyandNumber(); 
+	if ( apidata["APIkey"] == "") then
+		alert ("No API key found"); 
+		return "ERROR: Missing APIkey"; 
+	end if
+	
+	string APIkey = apidata["APIkey"]; 
+	bool production = (apidata["Production"]=="1");
+	int compOrg = int(apidata["CompNo"]); 
+	
+	string hdr = 'apiKey:'+APIkey; 
+	// /invoice/organizations/{opContextOrgId}/invoice-drafts
+	string url = getContaBaseURL(production)+"/invoice/organizations/"+compOrg+"/invoice-drafts";
+	print "\n"+url; 
+	string data = string(order); 
+	res = HTTP_POST ( url, data, hdr);
+	print "\n"+res;
+	int contaInvID;
+	// Verify the result- 
+	JSON apiRes = res; 
+	if (ContaVerifyAPIresponce(apiRes)) then
+		contaInvID = int(apires["id"]); 
+		print "\nContaInvoiceID = " + contaInvID+"\n"; 
+		// Update ContaProductID on the Product. 
+		sql = "UPDATE Orders SET ContaDraftInvoiceID = :contaInvID
+		WHERE PrimaryKey = :OrderPrimaryKey"; 
+		res = ExecuteSQL( sql ); 
+		if ( res != "") then
+			alert ( res ); 
+			return "ERROR Update ContaInvoiceID..."+res; 
+		end if
+	end if
+	
+	
+	return "OK"; 
+end
+
+
+function CustomerAddContact (string CustomerPriKey)
+	string FirstName = "New Contact"; 
+	string sql = "INSERT INTO Contacts (CustomerFK, FirstName) VALUES (:CustomerPriKey, :FirstName)"; 
+	string res = ExecuteSQL( sql ) ; 
+	return res; 
+end
