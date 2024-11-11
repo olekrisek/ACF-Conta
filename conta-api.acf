@@ -1,5 +1,12 @@
 Package ContaIntegration "Integrations to the Conta API"; 
-
+/**
+ * Retrieves the base URL for the Conta service.
+ *
+ * @param bool production Specifies whether to retrieve the production or development URL.
+ *                         Pass `true` for the production environment, `false` for development.
+ *
+ * @return string The base URL for the specified environment.
+ */
 function getContaBaseURL (bool production)
 	if ( production ) then
 		return "https://api.gateway.conta.no"; 
@@ -8,6 +15,17 @@ function getContaBaseURL (bool production)
 	end if
 end
 
+
+/**
+ * Retrieves the organization ID for a specified organization name in the Conta service.
+ *
+ * @param string APIkey      The API key for authentication with the Conta service.
+ * @param bool   production  Specifies whether to use the production or development environment.
+ *                            Pass `true` for production, `false` for development.
+ * @param string orgName     The name of the organization for which to retrieve the ID.
+ *
+ * @return string The organization ID associated with the specified organization name.
+ */
 function getContaOrganizationID ( string APIkey, bool production, string orgName )
 	$$ContaApiKey = APIkey; 
 	string hdr = 'apiKey:'+APIkey; 
@@ -36,7 +54,15 @@ function getContaOrganizationID ( string APIkey, bool production, string orgName
 	end for
 	return gCompID;
 end
-	
+
+/**
+ * Searches for a specified key in an array of strings.
+ *
+ * @param string[] arr The array of strings to search through.
+ * @param string   key The key to find within the array.
+ *
+ * @return int The index of the key if found; otherwise, returns -1.
+ */
 function find_in_array ( array string arr, string key)
 	int i; 
 	for ( i = 1, sizeof(arr))
@@ -47,7 +73,17 @@ function find_in_array ( array string arr, string key)
 	return -1; 
 end
 	
-	
+/**
+ * Calculates the discount amount based on quantity, price, and discount type.
+ *
+ * @param float  qty   The quantity of items.
+ * @param float  price The price per item.
+ * @param string disc  The discount to apply. This can be a fixed numeric discount 
+ *                      or a percentage discount if it includes a '%' symbol 
+ *                      (e.g., '10' for a $10 discount or '15%' for a 15% discount).
+ *
+ * @return float The total discount amount calculated based on the specified quantity, price, and discount.
+ */
 Function DiscountCalc ( float qty, float price, string disc)
 	disc = trimboth (disc); 
 	float discAm, discper; 
@@ -60,13 +96,34 @@ Function DiscountCalc ( float qty, float price, string disc)
 	return discAm; 
 end
 
+/**
+ * Asserts that two strings are equal and throws an exception with a message if they are not.
+ *
+ * @param string s1      The first string to compare.
+ * @param string s2      The second string to compare.
+ * @param string message The message to include in the exception if the assertion fails.
+ *
+ * @throws Exception if the strings are not equal. Including the message in the exception. 
+ *
+ * @return bool Returns `true` if the strings are equal.
+ */
 function Assert ( String s1, string s2, string message )
 	if ( s1 != s2 ) then
 		throw (message); 
 	end if
 	return true; 
 end
-
+/**
+ * Asserts that a specified string is found within an array of strings and throws an exception with a message if it is not.
+ *
+ * @param string   value   The string value to search for in the array.
+ * @param string[] arr     The array of strings to search within.
+ * @param string   message The message to include in the exception if the assertion fails.
+ *
+ * @throws Exception if the specified value is not found in the array. Including the message in the exception. 
+ *
+ * @return bool Returns `true` if the value is found in the array.
+ */
 function AssertInArray ( string value, array string arr, string message )
 	int x = find_in_array (arr, value); 
 	if (x<0) then
@@ -75,6 +132,23 @@ function AssertInArray ( string value, array string arr, string message )
 	return true; 
 end
 
+/**
+ * Retrieves API credentials and related information from the database and returns it as a JSON object.
+ *
+ * @return JSON A JSON object containing:
+ *              - `"APIkey"`: The current Conta API key (string).
+ *              - `"CompNo"`: The current Conta organization number (int).
+ *              - `"Production"`: `true` if in production mode, otherwise `false` (bool).
+ *              - `"EmailSubject"`: The subject line for email invoices (string).
+ *              - `"EmailContent"`: The content for email invoices (string).
+ *
+ *              If no data is found, returns a JSON object with default values:
+ *              - `"APIkey"`: an empty string.
+ *              - `"CompNo"`: `0`.
+ *              - `"Production"`: `false`.
+ *              - `"EmailSubject"`: an empty string.
+ *              - `"EmailContent"`: an empty string.
+ */
 function getContaApiKeyandNumber ()
 	array string apikeys, prod, invoSub, invoCont; 
 	array int contaOrgNr; 
@@ -95,6 +169,22 @@ function getContaApiKeyandNumber ()
 	return retObj;
 end
 
+/**
+ * Creates a JSON object containing the current Conta ID numbers for a record, allowing for later restoration when switching
+ * between production and sandbox environments. This function is typically called for each record in the Products, Orders, 
+ * and Customers tables.
+ *
+ * @param int    $ContaID     The current Conta ID for the record (integer).
+ * @param string $Notes       Notes associated with this record, typically for context or additional details.
+ * @param string $JSONContaIDs The JSON string containing previously saved Conta IDs for easy reference and switching.
+ *
+ * @return JSON A JSON object structured as follows:
+ *              - `"ContaIDsandbox"`: If Sandbox: The current Conta ID number (int).
+ *              - `"ContaIDprod"`: If production: The current Conta ID number (int).
+ *              
+ *
+ * This function captures essential IDs for future use, supporting seamless switching between environments.
+ */
 function CreateContaIDobject ( int ContaID, String Notes, string JSONContaIDs )
 	json apiData, returnJson;
 	if ( JSONContaIDs != "") then
@@ -117,9 +207,25 @@ function CreateContaIDobject ( int ContaID, String Notes, string JSONContaIDs )
 	  end if
   	end if
 	print "returnJson: \n" + string (returnJson)+"\n"+"="*50+"\n"; 
+	
 	return returnJson; 
 end	
-
+/**
+ * Creates a JSON object containing the current Conta ID numbers for a record, allowing for later restoration when switching
+ * between production and sandbox environments. This function is typically called for each record in the Products, Orders, 
+ * and Customers tables.
+ *
+ * @param int    ContaIDInv     The current Invoice Conta ID for the record (integer).
+ * @param int    ContaIDDraft   The current Draft Conta ID for the record (integer).
+ * @param string JSONContaIDs The JSON string containing previously saved Conta IDs for easy reference and switching.
+ *
+ * @return JSON A JSON object structured as follows:
+ *              - `"ContaIDsandbox"`: If Sandbox: Object containing "Inv", and "Draft" id numberws
+ *              - `"ContaIDprod"`: If production: Object containing "Inv", and "Draft" id numberws
+ *              
+ *
+ * This function captures essential IDs for future use, supporting seamless switching between environments.
+ */
 function CreateContaIDobjectOrder ( int ContaIDInv, int ContaIDDraft, string JSONContaIDs )
 	json apiData, returnJson;
 	if ( JSONContaIDs != "") then
@@ -140,6 +246,35 @@ function CreateContaIDobjectOrder ( int ContaIDInv, int ContaIDDraft, string JSO
 	return returnJson; 
 end	
 
+/**
+ * Retrieves the active Conta ID from a saved JSON object based on the module type and current environment setting.
+ * This function checks the JSON object for the correct ID to use depending on whether it's for products/customers or 
+ * orders (invoiced or draft), and based on whether the environment is production or sandbox.
+ *
+ * @param string $contaJSONstr The JSON string containing saved Conta IDs for different modules and environments.
+ * @param string $module       The module type to determine which ID to retrieve:
+ *                             - An empty string (`""`) for Products/Customers.
+ *                             - `"OI"` for Orders - Invoiced.
+ *                             - `"OD"` for Orders - Draft.
+ *
+ * @return string The appropriate Conta ID for the module and environment setting. Returns an empty string if:
+ *                - `contaJSONstr` is empty.
+ *                - The requested Conta ID is not available.
+ *
+ * @note This function defaults to returning an empty string if the specified key does not exist or if it holds an 
+ *       invalid value. It also prints debug information, including input values, selected module, and production 
+ *       status.
+ *
+ * @example Example JSON structure for `contaJSONstr`:
+ *          {
+ *              "ContaIDprod": "12345",
+ *              "ContaIDsandbox": "54321",
+ *              "ContaIDprod.Draft": "67890",
+ *              "ContaIDsandbox.Draft": "09876",
+ *              "ContaIDprod.Inv": "11223",
+ *              "ContaIDsandbox.Inv": "33211"
+ *          }
+ */
 function GetActiveContaIDJSON ( string contaJSONstr, string module )
 	string ret; 
 	if (trimboth(contaJSONstr) == "" ) then
@@ -166,12 +301,38 @@ function GetActiveContaIDJSON ( string contaJSONstr, string module )
 		default
 	end case
 	print ",    ret="+ret; 
-	if (ret == "0") then
+	// If object does not have key, an "?" is returned (char(63))
+	if (ret == "0" || ret == char(63)) then
 		return ""; 
 	end if
 	return ret;
 end
 
+/**
+ * Validates and cleans a given phone number by ensuring it conforms to the Norwegian phone number format.
+ * The phone number is stripped of non-numeric characters, and if it contains more than 8 digits, 
+ * the country code (+47) is removed. If the resulting number has fewer than 8 digits, it is considered invalid.
+ * The function returns a cleaned phone number with exactly 8 digits or an empty string if the number is invalid.
+ *
+ * @param string $Phone The phone number to validate and clean. It can contain non-numeric characters
+ *                      (such as spaces, hyphens, or parentheses) which will be removed.
+ *
+ * @return string The cleaned phone number, with exactly 8 digits if valid, or an empty string if invalid.
+ *
+ * @note This function assumes that valid Norwegian phone numbers consist of exactly 8 digits after 
+ *       stripping any non-numeric characters. If the number has more than 8 digits, the function strips
+ *       the country code (+47) from the front. If the number has fewer than 8 digits after cleaning,
+ *       it is considered invalid, and the function returns an empty string.
+ *
+ * @example
+ *          - Input: "+47 123 45 678"
+ *            Output: "12345678"
+ *          - Input: "123-456-789"
+ *            Output: "23456789"
+ *          - Input: "123456"
+ *            Output: ""
+ *    
+ */
 Function ValidateAndCleanPhoneNumber ( string Phone )
 	// Norwegian phone numbers are exactly 8 digits.
 	Phone = regex_replace("[^0-9]", Phone, ""); 
@@ -184,6 +345,27 @@ Function ValidateAndCleanPhoneNumber ( string Phone )
 	return Phone; 
 end
 
+/**
+ * Verifies the response from an API call by checking for an error structure in the supplied JSON response.
+ * If an error is found, the function throws an exception with the provided error message.
+ * If no error is found, it returns `true` indicating the response is valid.
+ *
+ * @param json $responce The JSON response returned from an API call. It is expected to contain a structure
+ *                       that includes an error message if the API call fails.
+ *
+ * @throws Exception If an error is found in the JSON response, an exception is thrown with the error message.
+ *                   The exception message will provide details of the error encountered.
+ *
+ * @return bool Returns `true` if the API response does not contain an error and is valid. Otherwise, an exception
+ *              is thrown.
+ *
+ * @note This function assumes that the JSON response structure from the API includes a specific error field
+ *       containing a message when the API call fails. If the structure is different, the function may not work as expected.
+ *
+ * @example
+ *          - If the response JSON contains an error structure, an exception is thrown with the error message.
+ *          - If the response is successful and contains no errors, the function returns `true`.
+ */
 Function ContaVerifyAPIresponce (json responce)
 	array string messages; 
 	string msg, keys = list_keys(responce); 
@@ -208,7 +390,25 @@ Function ContaVerifyAPIresponce (json responce)
 	// return true; 
 end
 
-
+/**
+ * Creates a new customer in the Conta accounting system based on the provided customer primary key.
+ * Additionally, the customer ID in Conta is updated in the corresponding customer record in the database.
+ * If the customer is successfully created and updated, the function returns "OK".
+ *
+ * @param string PrimaryKey The primary key of the customer to be created. This key uniquely identifies the customer in the database.
+ *
+ * @return string Returns "OK" if the customer is created and the customer ID is updated successfully. 
+ *                In case of any failure, an error message will be returned.
+ *
+ * @note This function assumes that all necessary customer data is available in the system and correctly mapped to the 
+ *       corresponding fields for Conta customer creation. It also ensures that the customer ID in Conta is updated in the 
+ *       corresponding customer record in the database. Error handling should be implemented to address potential failures 
+ *       during both the customer creation and update processes.
+ *
+ * @example 
+ *          - If the customer is created and the ID updated successfully, the function will return "OK".
+ *          - If there is an issue with customer creation or updating the ID, an appropriate error message may be returned.
+ */
 Function ContaMakeCustomer(string PrimaryKey)
 
 	array int cuKundeID;
@@ -352,12 +552,24 @@ Function ContaMakeCustomer(string PrimaryKey)
 	return "OK";
 End
 
-/*
-
-	CREATE PRODUCT
-	
-*/
-
+/**
+ * Creates a new product in the Conta accounting system based on the provided product primary key.
+ * If the product is successfully created, the function returns "OK".
+ *
+ * @param string ProdPrimKey The primary key of the product to be created. This key uniquely identifies the product in the database.
+ *
+ * @return string Returns "OK" if the product is created successfully. If the creation process encounters any issues, 
+ *                an error message or code may be returned (depending on the function's implementation).
+ *		- The conta-ID for the product is updated on the product. 
+ *
+ * @note This function assumes that all necessary product data is available in the system and correctly mapped to the 
+ *       corresponding fields for Conta product creation. Error handling should be implemented to manage potential failures 
+ *       during the product creation process.
+ *
+ * @example 
+ *          - If the product is created successfully, the function will return "OK".
+ *          - If there is an issue with the product creation, an appropriate error message may be returned.
+ */
 
 Function ContaCreateProduct(string ProdPrimKey)
 	array string prodProductNo, prodProductName, prodVatCode, prodBookKepingAccount, prodIsActive;
@@ -427,55 +639,30 @@ Function ContaCreateProduct(string ProdPrimKey)
 	return "OK";
 End
 
-/*
 
-Kunder::PrimaryKey
-Kunder::ContaCustomerID
-Orders::PrimaryKey
-Orders::CustomerFK
-Orders::CustomerName
-Orders::OrderDate
-Orders::OrderID
-Orders::OrderDeliveryDate
-Orders::OrderDescription
-Orders::OrderStatus
-Orders::ContaInvoiceID
-Orders::SumNet
-Orders::InvoiceDate
-Orders::DueDate
-
-OrdersDetails::OrderFK
-OrdersDetails::LineNo
-OrdersDetails::ProductFK
-OrdersDetails::ProductName
-OrdersDetails::Price
-OrdersDetails::Qty
-OrdersDetails::Discount
-OrdersDetails::LineTotal
-OrdersDetails::TaxType
-OrdersDetails::TaxPercent
-OrdersDetails::SumInclVAT
-
-Products::PrimaryKey
-Products::ProductNo
-Products::ProductName
-Products::VatCode
-Products::Price
-Products::BookKepingAccount
-Products::ContaProductID
-
-*/
-
-
-/*
-
-Orders::ContaDraftInvoiceID
-Orders::InvoiceNoOtherSystem
-Orders::PaidAmount
-Orders::ContaInvoiceID
-	
-*/
-
+/**
+ * Creates an invoice in the Conta accounting system by pulling data from the order structure in the database 
+ * based on the given PrimaryKey. If the invoice has not already been sent (determined by the `allreadysent` flag),
+ * the function also adds the recipient structure to ensure the invoice is sent to the customer.
+ *
+ * @param string OrderPrimaryKey The primary key of the order from which to retrieve the data for the invoice.
+ *                                This key uniquely identifies the order in the database.
+ * @param bool   allreadysent    A flag indicating whether the invoice has already been sent.
+ *                                If `false`, the function will add recipient details and send the invoice to the customer.
+ *
+ * @return "OK" If everything goes well, otherwise an error message. 
+ *              - Creating an invoice in the Conta system.
+ *              - Optionally, sending the invoice to the customer if `allreadysent` is `false`.
+ *
+ * @note This function assumes that the required order data is present in the database, and it will map this data 
+ *       to the corresponding fields for the Conta invoice creation process. If the invoice is not sent immediately,
+ *       the recipient structure is skipped.
+ * @note IF the order has an Invoice-Draft-ID, the draft is deleted on successfull creation. 
+ *
+ * @example 
+ *          - If `allreadysent` is `true`, the invoice will be created without sending it again.
+ *          - If `allreadysent` is `false`, the invoice will be created and sent to the customer.
+ */
 function CreateContaInvoice (string OrderPrimaryKey, bool allreadysent)
 	// Verify if the customer is created
 	
@@ -615,8 +802,10 @@ function CreateContaInvoice (string OrderPrimaryKey, bool allreadysent)
 	    // "saleId", "9223372036854776000",
 	    "type", "NORMAL"
 	);
+	string extraSQL; 
 	if (ohContaDraftInvoiceID[1] != 0 ) then
 		order["id"] = ohContaDraftInvoiceID[1]; 
+		extraSQL = ", ContaDraftInvoiceID = ''";
 	end if
 	print "Done OH"+ "\n"; 
 	string vat;
@@ -721,8 +910,6 @@ function CreateContaInvoice (string OrderPrimaryKey, bool allreadysent)
 	end if
 	print string(order); 
 	
-	// Debugg stopp
-	// return order; 
 	
 	// Do the API request
 	
@@ -738,14 +925,18 @@ function CreateContaInvoice (string OrderPrimaryKey, bool allreadysent)
 	string data = string(order); 
 	res = HTTP_POST ( url, data, hdr);
 	print "\n"+res;
-	int contaInvID;
+	int contaInvID, contaInvNo;
+	string status; 
 	// Verify the result- 
 	JSON apiRes = res; 
 	if (ContaVerifyAPIresponce(apiRes)) then
 		contaInvID = int(apires["id"]); 
+		contaInvNo = int(apires["invoiceNo"]); 
+		status = apires["status"];
 		print "\nContaInvoiceID = " + contaInvID+"\n"; 
 		// Update ContaProductID on the Product. 
-		sql = "UPDATE Orders SET ContaInvoiceID = :contaInvID
+		// ExtraSQL contains nulling og draft-ID, if previously sent as draft. 
+		sql = "UPDATE Orders SET ContaInvoiceID = :contaInvID, InvoiceNo = :contaInvNo, OrderStatus = :status"+extraSQL+"
 		WHERE PrimaryKey = :OrderPrimaryKey"; 
 		res = ExecuteSQL( sql ); 
 		if ( res != "") then
@@ -758,7 +949,26 @@ function CreateContaInvoice (string OrderPrimaryKey, bool allreadysent)
 	return "OK"; 
 end
 
-
+/**
+ * Creates a draft invoice in the Conta accounting system for the order with the specified PrimaryKey.
+ * The draft invoice can be edited in the Conta web-interface before being finalized.
+ * The function retrieves order details from the database and creates a draft invoice in Conta, without 
+ * sending it to the customer. This allows for review and edits prior to finalizing the invoice.
+ *
+ * @param string OrderPrimaryKey The unique primary key of the order for which the draft invoice is created.
+ *                               The order details are retrieved from the database using this key.
+ *
+ * @return string Returns "OK" if the draft invoice was successfully created in the Conta system,
+ *                or an error message if the creation fails.
+ *
+ * @note This function does not send the invoice to the customer. It only creates a draft that can be 
+ *       reviewed and edited in the Conta web interface before finalization.
+ * @note IF the invoice is created from the CreateContaInvoice, the draft is deleted. 
+ *
+ * @example
+ *          - Input: "ORD12345"
+ *            Output: "OK"
+ */
 function CreateInvoiceDraft (string OrderPrimaryKey)
 	// Verify if the customer is created
 	
@@ -953,8 +1163,102 @@ function CreateInvoiceDraft (string OrderPrimaryKey)
 	
 	return "OK"; 
 end
+/**
+ * Retrieves the invoice number and invoice status for a given order and updates the corresponding record in the database.
+ * This function makes an API call to the Conta accounting system to fetch the invoice details and updates the
+ * order record in the database with the retrieved information.
+ *
+ * @param string PrimaryKeyOrder The unique primary key of the order for which the invoice details are retrieved.
+ *                               The order record in the database is updated with the invoice number and status.
+ *
+ * @return string Returns "OK" if the invoice details were successfully retrieved and the database was updated,
+ *                or an error message if the update fails.
+ *
+ * @note This function assumes that the order already has an associated invoice in Conta. It will update the
+ *       order record with the invoice number and the latest status.
+ *
+ * @example
+ *          - Input: "ORD12345"
+ *            Output: "OK"
+ */
+function UpdateOrderContaInvoice (string PrimaryKeyOrder)
+	array int ohContaInvoiceID, ohContaDraftInvoiceID,ohInvoiceNo;
+	array float ohPaidAmount;
+	string sql = "SELECT InvoiceNo, PaidAmount, ContaInvoiceID, ContaDraftInvoiceID FROM Orders
+	WHERE PrimaryKey = :PrimaryKeyOrder
+	INTO :ohInvoiceNo, :ohPaidAmount, :ohContaInvoiceID, :ohContaDraftInvoiceID
+	";
+	string res = ExecuteSQL ( sql ); 
+	case 
+		: (res != "OK")
+			return "Some Error returned from SQL: " + res; 
+		:(sizeof (ohContaInvoiceID) == 0)
+			return "Order not found: " + res; 
+		:(ohContaInvoiceID[1] == 0 && ohContaDraftInvoiceID[1] == 0)
+			return "Order not invoice yet";
+		:(ohContaInvoiceID[1] == 0 && ohContaDraftInvoiceID[1] != 0)
+			return "Order only have draft, no Invoice number yet";
+		default
+	end case
+	
+	
+	// Do the API request
+	JSON apidata = getContaApiKeyandNumber(); 
+	if ( apidata["APIkey"] == "") then
+		alert ("No API key found"); 
+		return "ERROR: Missing APIkey"; 
+	end if
+	
+	string APIkey = apidata["APIkey"]; 
+	bool production = (apidata["Production"]=="1");
+	int compOrg = int(apidata["CompNo"]); 
+	
+	string hdr = 'apiKey:'+APIkey; 
+	// /invoice/organizations/{opContextOrgId}/invoices/{id}
+	string url = getContaBaseURL(production)+"/invoice/organizations/"+compOrg+"/invoices/"+ohContaInvoiceID[1];
+	print "\n"+url+"\n"; 
+	
+	res = HTTP_GET ( url, hdr);
+	print "\n"+res;
+	int contaInvNo;
+	string status; 
+	// Verify the result- 
+	JSON apiRes = res; 
+	if (ContaVerifyAPIresponce(apiRes)) then
+		contaInvNo = int(apires["invoiceNo"]); 
+		status = apires["status"];
+		print "\ncontaInvNo = " + contaInvNo+"\n"; 
+		// Update ContaProductID on the Product. 
+		sql = "UPDATE Orders SET InvoiceNo = :contaInvNo, OrderStatus = :status
+		WHERE PrimaryKey = :PrimaryKeyOrder"; 
+		res = ExecuteSQL( sql ); 
+		if ( res != "") then
+			alert ( res ); 
+			return "ERROR Update ContaInvoiceID..."+res; 
+		end if
+	end if
+		
+	
+	return "OK"; 
+end
 
-
+/**
+ * Adds a new contact record linked to the specified customer.
+ * This utility function is designed for the GUI and allows the creation of a new contact 
+ * that is associated with an existing customer in the system.
+ *
+ * @param string $CustomerPriKey The unique primary key of the customer to which the new contact will be linked.
+ *                               The contact record will be added and associated with this customer.
+ *
+ * @return string Returns "" if the contact was successfully added, or an error message if the operation fails.
+ *
+ * @note This function is intended for GUI use and will add a new contact record to the system, linking it
+ *       to the provided customer. It is not an API-based function.
+ *
+ * @example
+ *          - Input: "CUST12345"
+ *            Output: ""
+ */
 function CustomerAddContact (string CustomerPriKey)
 	string FirstName = "New Contact"; 
 	string sql = "INSERT INTO Contacts (CustomerFK, FirstName) VALUES (:CustomerPriKey, :FirstName)"; 
